@@ -104,11 +104,20 @@ SynonymousCodons = {
   }
 
 def calculate_codon(sequence):            
+    """Return a fresh codon count dictionary for one sequence."""
+    local_CDict = {codon: 0.0 for codon in Fixed_values.keys()}  # reset each time
     for i in range(0, len(sequence), 3):
         codon = sequence[i:i + 3]
-        if codon in CDict:
-            CDict[codon] += 1
-    return(CDict)
+        if codon in local_CDict:
+            local_CDict[codon] += 1
+    return local_CDict
+
+def divide_safely(a, b):
+    """Safe division: returns None if denominator is 0 or invalid."""
+    try:
+        return a / b if b != 0 else None
+    except Exception:
+        return None
         
 
 def ti_tv_fn(mx, tt):
@@ -153,130 +162,101 @@ def diff(mx, lst):
     else:
         return False
         
-def divide_safely(a, b):
-    try:
-        if a is not None and b is not None and b!=0 :
-            result = a / b
-            return result
-        else:
-            return None
-    except ZeroDivisionError:
-        #print("Error: Division by zero is not allowed.")
-        return None
-
-
-
-
 def process(gene_names):
     ti_tv_values = []
     mutation = []
     df = pd.DataFrame()
     df_mut = pd.DataFrame()
     mut_cols = ["Gene","pos","fr_cdn","to_cdn","fr_AA","to_AA","Synti_Syntv_NSynti_NSyntv"]
+
     OE_values = []
     df_oe = pd.DataFrame()
-    oe_cols = ["Gene", "Synti_o", "Syntv_o", "NSynti_o", "NSyntv_o", "ti_o", "tv_o", "Synti_e", "Syntv_e", "NSynti_e", "NSyntv_e", "ti_e", "tv_e"]
+    oe_cols = ["Gene", "Synti_o", "Syntv_o", "NSynti_o", "NSyntv_o", "ti_o", "tv_o", 
+               "Synti_e", "Syntv_e", "NSynti_e", "NSyntv_e", "ti_e", "tv_e"]
+
     reference_seq = []
     df_rsq = pd.DataFrame()
     rsq_cols = ["Gene","Reference Sequence"] 
-    #gene_names = gene_names[:-1]
+
+    # --- Clear codon_count.txt before writing ---
+    open('codon_count.txt', 'w').close()
+
     for line in gene_names:
         line = line.strip("\n")
         fil_ = os.path.basename(line)
         file = os.path.splitext(fil_)[0]
-			
-        aa = open(line,"r")
 
-        read_file = aa.read()
-        N1 = read_file.count(">") # count number of strains
+        # read fasta file
+        with open(line, "r") as aa:
+            read_file = aa.read()
+
+        N1 = read_file.count(">")
         read_file_split = read_file.split("\n")
-        N = len(read_file_split[1]) # gene length
-        #print(N, N1)
+        N = len(read_file_split[1])  # gene length
 
-
-
-        # collect only strains in a list
+        # collect only strain sequences
         Only_strain = []
-
         for g in range(N1*2):
-            if g%2 != 0:
+            if g % 2 != 0:
                 read_file_split[g] = read_file_split[g].upper().replace("U","T")
                 Only_strain.append(read_file_split[g])
-        #print(Only_strain)
 
-
-
-
-
-        Synti = 0
-        NSynti = 0
-        Syntv = 0
-        NSyntv = 0
-        m_lst = []
-        lst = []
+        # initialize mutation counts
+        Synti = NSynti = Syntv = NSyntv = 0
         ref_seq = ''
+
+        # codon-by-codon comparison
         for j in range(0, N, 3):
-            for i in range(N1):
-                cdn = Only_strain[i][j:j+3] #column wise codon
-                m_lst.append(cdn) # m_lst stores all codons in a list
-                #print(m_lst)
-            mx = max_occurred_element = max(set(m_lst), key=m_lst.count) # reference codon
-            ref_seq += (mx) 
-            lst_h = list(set(m_lst)) #find unique elements in list
+            m_lst = [Only_strain[i][j:j+3] for i in range(N1)]
+            mx = max(set(m_lst), key=m_lst.count)  # reference codon
+            ref_seq += mx
+            lst_h = list(set(m_lst))
             lst = [item for item in lst_h if item != mx and 'N' not in item]
-            #print(lst)
-            #print(mx)
-            result = diff(mx, lst)
-            #print(result)
-            if (result):
+
+            if diff(mx, lst):
                 for tt in lst:
-                    if tt== 'TGA' or tt == 'TAG' or tt == 'TAA' or 'N' in tt:
-                        #print(tt)
+                    if tt in ['TGA','TAG','TAA'] or 'N' in tt:
                         continue
-                    else:
-                        ti_tv = ti_tv_fn(mx, tt)
-                        S_Ns_ti_tv = S_Ns_ti_tv_fn(ti_tv, mx, tt)
-                        #print(S_Ns_ti_tv)
-                        
-                        if(S_Ns_ti_tv):
-                            mx_key = get_key(mx)
-                            tt_key = get_key(tt)
-                            mutation.append([file, str(j+1),mx,tt,mx_key, tt_key,S_Ns_ti_tv])
-                            df_mut = pd.DataFrame(mutation, columns=mut_cols)
-                            if S_Ns_ti_tv == 'Synti':
-                                Synti += 1
-                            elif S_Ns_ti_tv == 'NSynti':
-                                NSynti += 1
-                            elif S_Ns_ti_tv == 'Syntv':
-                                Syntv += 1
-                            elif S_Ns_ti_tv == 'NSyntv':
-                                NSyntv += 1
+                    ti_tv = ti_tv_fn(mx, tt)
+                    S_Ns_ti_tv = S_Ns_ti_tv_fn(ti_tv, mx, tt)
+                    if S_Ns_ti_tv:
+                        mx_key = get_key(mx)
+                        tt_key = get_key(tt)
+                        mutation.append([file, str(j+1), mx, tt, mx_key, tt_key, S_Ns_ti_tv])
+                        df_mut = pd.DataFrame(mutation, columns=mut_cols)
+                        if S_Ns_ti_tv == 'Synti':
+                            Synti += 1
+                        elif S_Ns_ti_tv == 'NSynti':
+                            NSynti += 1
+                        elif S_Ns_ti_tv == 'Syntv':
+                            Syntv += 1
+                        elif S_Ns_ti_tv == 'NSyntv':
+                            NSyntv += 1
 
-
-            lst = []
-            m_lst = []
-            
+        # store reference sequence
         reference_seq.append([file, ref_seq])
-        df_rsq = pd.DataFrame(reference_seq, columns = rsq_cols)           
-        calculate_codon(ref_seq)
-        with open('codon_count.txt', 'w') as ff:
-            for codon, values in CDict.items():
-                line = f"{codon}\t{values}\n"
-                ff.write(line)	
-        
+        df_rsq = pd.DataFrame(reference_seq, columns=rsq_cols)           
 
+        # ✅ fresh codon counts for this gene only
+        CDict = calculate_codon(ref_seq)
+
+        # ✅ Append codon counts for each gene into one file
+        with open('codon_count.txt', 'a') as ff:
+            ff.write(f"\n# Gene: {file}\n")
+            ff.write("Codon\tCount\n")
+            for codon, values in CDict.items():
+                ff.write(f"{codon}\t{values}\n")
+
+        # observed values
         ti_o = Synti + NSynti
         tv_o = Syntv + NSyntv
 
-
-
+        # expected values
         new_dict = {
-            key: {inner_key: Fixed_values[key][inner_key] * CDict[key] for inner_key in Fixed_values[key]}
+            key: {inner_key: Fixed_values[key][inner_key] * CDict[key] 
+                  for inner_key in Fixed_values[key]}
             for key in Fixed_values if key in CDict
         }
-
-
-        #print(new_dict)
 
         Synti_e = sum(v['Sti'] for v in new_dict.values())
         Syntv_e = sum(v['Stv'] for v in new_dict.values())
@@ -285,66 +265,39 @@ def process(gene_names):
 
         ti_e = Synti_e + NSynti_e
         tv_e = Syntv_e + NSyntv_e
-        
-        OE_values.append([file, Synti, Syntv, NSynti, NSyntv, ti_o, tv_o, Synti_e, Syntv_e, NSynti_e, NSyntv_e, ti_e, tv_e])
-        df_oe = pd.DataFrame(OE_values, columns=oe_cols)
-        #print(Synti_e, Syntv_e, NSynti_e, NSyntv_e, ti_e, tv_e)
-        #print(Synti, Syntv, NSynti, NSyntv, ti_o, tv_o)
-        
-        #Syntio_tvo
-        result = divide_safely(Synti, Syntv)
-        if result is not None:
-            Stio_by_Stvo = str(round(result,3))
-        else:
-            Stio_by_Stvo = "Denominator is 0"
-        
-        #NSyntio_tvo
-        result1 =  divide_safely(NSynti, NSyntv)       
-        if result1 is not None:
-            Ntio_by_Ntvo = str(round(result1,3))
-        else:
-            Ntio_by_Ntvo = "Denominator is 0"
-        
-        #tio_tvo
-        result2 = divide_safely(ti_o, tv_o)
-        if result2 is not None:
-            tio_by_tvo = str(round(result2,3))
-        else:
-            tio_by_tvo = "Denominator is 0"
-        
 
-        #ti'/tv'
+        OE_values.append([file, Synti, Syntv, NSynti, NSyntv, ti_o, tv_o, 
+                          Synti_e, Syntv_e, NSynti_e, NSyntv_e, ti_e, tv_e])
+        df_oe = pd.DataFrame(OE_values, columns=oe_cols)
+
+        # ratios
+        result = divide_safely(Synti, Syntv)
+        Stio_by_Stvo = str(round(result,3)) if result is not None else "Denominator is 0"
+
+        result1 = divide_safely(NSynti, NSyntv)
+        Ntio_by_Ntvo = str(round(result1,3)) if result1 is not None else "Denominator is 0"
+
+        result2 = divide_safely(ti_o, tv_o)
+        tio_by_tvo = str(round(result2,3)) if result2 is not None else "Denominator is 0"
+
         result3 = divide_safely(ti_o, ti_e)
         result4 = divide_safely(tv_o, tv_e)
         rs = divide_safely(result3, result4)
-        
-        if rs is not None and result3 is not None and result4 is not None:
-            ti_dash_by_tv_dash = str(round(rs,3))
-        else:
-            ti_dash_by_tv_dash = "Denominator is 0"
-            
-        #Sti'/Stv'
+        ti_dash_by_tv_dash = str(round(rs,3)) if rs is not None else "Denominator is 0"
+
         result5 = divide_safely(Synti, Synti_e)
         result6 = divide_safely(Syntv, Syntv_e)
         rs1 = divide_safely(result5, result6)
-        if rs1 is not None and result5 is not None and result6 is not None:
-            Sti_dash_by_Stv_dash = str(round(rs1,3))
-        else:
-            Sti_dash_by_Stv_dash = "Denominator is 0"
-        
-        #Nti'/Ntv'
+        Sti_dash_by_Stv_dash = str(round(rs1,3)) if rs1 is not None else "Denominator is 0"
+
         result7 = divide_safely(NSynti, NSynti_e)
         result8 = divide_safely(NSyntv, NSyntv_e)
         rs2 = divide_safely(result7, result8)
-        if rs2 is not None and result7 is not None and result8 is not None:
-            Nti_dash_by_Ntv_dash = str(round(rs2,3))
-        else:
-            Nti_dash_by_Ntv_dash = "Denominator is 0"
-            
-        #print(round(Stio_by_Stvo,3), round(Ntio_by_Ntvo,3), round(tio_by_tvo,3), round(ti_dash_by_tv_dash,3), round(Sti_dash_by_Stv_dash,3), round(Nti_dash_by_Ntv_dash,3))
-        ti_tv_values.append([file, Stio_by_Stvo, Ntio_by_Ntvo, tio_by_tvo, ti_dash_by_tv_dash, Sti_dash_by_Stv_dash, Nti_dash_by_Ntv_dash])
-        
+        Nti_dash_by_Ntv_dash = str(round(rs2,3)) if rs2 is not None else "Denominator is 0"
+
+        ti_tv_values.append([file, Stio_by_Stvo, Ntio_by_Ntvo, tio_by_tvo, 
+                             ti_dash_by_tv_dash, Sti_dash_by_Stv_dash, Nti_dash_by_Ntv_dash])
     
-    columns = ["Gene","Stio / Stvo", "Ntio / Ntvo", "tio / tvo", "ti\' / tv\'", "Sti\' / Stv\'", "Nti\' / Ntv\'"]
+    columns = ["Gene","Stio / Stvo", "Ntio / Ntvo", "tio / tvo", "ti' / tv'", "Sti' / Stv'", "Nti' / Ntv'"]
     df = pd.DataFrame(ti_tv_values, columns=columns)
-    return 	df, df_mut, df_oe, df_rsq
+    return df, df_mut, df_oe, df_rsq
